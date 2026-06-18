@@ -1,0 +1,11 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# DxLink token cache (if TT_DXLINK_CACHE_PATH points inside the repo)
+*.dxlinktoken
+
+# Built binaries
+/tastytrade-mcp
+/cmd/tastytrade-mcp/tastytrade-mcp
