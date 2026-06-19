@@ -10,18 +10,17 @@ import (
 type Config struct {
 	Gates // embeds ReadOnly + Enable* (task 013)
 
-	ClientSecret, RefreshToken              string
-	Environment                             Environment
-	APIBaseURL, AccountStreamerURL          string
-	AccountNumbers                          []string
-	DefaultAccount                          string
-	UserAgent, APIVersion                   string
-	DxLinkCachePath                         string
-	Transport, Port                         string
-	MCPAuthToken                            string
-	OAuthClientID, OAuthClientSecret        string
-	ServerURL                               string
-	ToolTimeout, StaleQuoteThreshold        time.Duration
+	ClientSecret, RefreshToken       string
+	Environment                      Environment
+	APIBaseURL, AccountStreamerURL   string
+	AccountNumbers                   []string
+	DefaultAccount                   string
+	UserAgent, APIVersion            string
+	DxLinkCachePath                  string
+	Transport, Port                  string
+	OAuthClientID, OAuthClientSecret string
+	ServerURL                        string
+	ToolTimeout, StaleQuoteThreshold time.Duration
 }
 
 // getenv is the injected lookup: returns value (or "" if unset).
@@ -65,7 +64,6 @@ func loadFrom(get getenv) (*Config, error) {
 		if c.ServerURL == "" {
 			return nil, fmt.Errorf("SERVER_URL is required for MCP_TRANSPORT=http")
 		}
-		c.MCPAuthToken = get("MCP_AUTH_TOKEN")
 		c.OAuthClientID = get("OAUTH_CLIENT_ID")
 		c.OAuthClientSecret = get("OAUTH_CLIENT_SECRET")
 	}

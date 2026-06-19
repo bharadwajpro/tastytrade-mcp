@@ -6,8 +6,9 @@ import (
 )
 
 type HTTPConfig struct {
-	ServerURL    string
-	MCPAuthToken string
+	ServerURL         string
+	OAuthClientID     string
+	OAuthClientSecret string
 }
 
 func jsonHandler(doc func() any) http.HandlerFunc {
@@ -25,18 +26,18 @@ func NewMux(cfg HTTPConfig, mcpHandler http.Handler) *http.ServeMux {
 		jsonHandler(func() any { return protectedResourceDoc(cfg.ServerURL) }))
 	mux.HandleFunc("/.well-known/oauth-authorization-server",
 		jsonHandler(func() any { return authServerMetadataDoc(cfg.ServerURL) }))
-	mux.Handle("/mcp", bearerMiddleware(cfg.MCPAuthToken, mcpHandler))
+	store := newTokenStore()
+	mux.Handle("/mcp", bearerMiddleware(store, mcpHandler))
 
-	gw := newOAuthGateway(cfg.ServerURL, cfg.MCPAuthToken)
+	gw := newOAuthGateway(cfg.ServerURL, store, cfg.OAuthClientID, cfg.OAuthClientSecret)
 	mux.HandleFunc("/oauth/authorize", gw.authorize)
 	mux.HandleFunc("/oauth/token", gw.token)
-	mux.HandleFunc("/oauth/register", gw.register)
 	return mux
 }
 
-func bearerMiddleware(token string, next http.Handler) http.Handler {
+func bearerMiddleware(store *tokenStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !checkBearer(r.Header.Get("Authorization"), token) {
+		if !checkBearer(r.Header.Get("Authorization"), store) {
 			w.Header().Set("WWW-Authenticate", `Bearer`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

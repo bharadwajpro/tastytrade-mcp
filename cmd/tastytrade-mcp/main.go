@@ -77,13 +77,14 @@ func run() error {
 	case "stdio":
 		return mcptools.ServeStdio(srv)
 	default: // "http"
-		if cfg.MCPAuthToken == "" {
-			log.Printf("warning: MCP_AUTH_TOKEN is empty; /mcp will reject all requests until it is set")
+		if cfg.OAuthClientID == "" || cfg.OAuthClientSecret == "" {
+			log.Printf("warning: OAUTH_CLIENT_ID/OAUTH_CLIENT_SECRET is empty; /oauth/token will reject all clients (and /mcp is unreachable) until both are set")
 		}
 		log.Printf("tastytrade-mcp %s listening on :%s (env=%s, read_only=%v)", Version, cfg.Port, cfg.Environment, cfg.ReadOnly)
 		return mcptools.ServeHTTP(ctx, srv, mcptools.HTTPConfig{
-			ServerURL:    cfg.ServerURL,
-			MCPAuthToken: cfg.MCPAuthToken,
+			ServerURL:         cfg.ServerURL,
+			OAuthClientID:     cfg.OAuthClientID,
+			OAuthClientSecret: cfg.OAuthClientSecret,
 		}, ":"+cfg.Port)
 	}
 }

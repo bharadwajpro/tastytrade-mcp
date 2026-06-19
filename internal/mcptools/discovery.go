@@ -19,11 +19,10 @@ func authServerMetadataDoc(serverURL string) map[string]any {
 		"issuer":                                s,
 		"authorization_endpoint":                s + "/oauth/authorize",
 		"token_endpoint":                        s + "/oauth/token",
-		"registration_endpoint":                 s + "/oauth/register",
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none"},
+		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		"scopes_supported":                      []string{"mcp"},
 	}
 }

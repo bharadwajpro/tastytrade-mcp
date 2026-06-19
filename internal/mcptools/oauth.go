@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -10,13 +11,19 @@ import (
 	"time"
 )
 
-// oauthGateway implements a minimal OAuth2 authorization-code + PKCE flow that bridges
-// MCP clients to this server's static bearer token. It does NOT touch tastytrade's
-// OAuth — that is handled server-side by ttclient. Here we only authenticate the MCP
-// client connecting to /mcp.
+// oauthGateway implements an OAuth2 authorization-code + PKCE flow that issues access and
+// refresh tokens for this server's /mcp endpoint. It does NOT touch tastytrade's OAuth —
+// that is handled server-side by ttclient. Here we only authenticate the MCP client.
+//
+// Client authentication is by a single fixed (clientID, clientSecret) pair shared with the
+// operator out of band. There is no dynamic client registration: any other client_id or
+// client_secret is rejected. Empty configured credentials fail closed (reject all). The
+// credentials gate token issuance only; the tokens themselves live in the shared tokenStore.
 type oauthGateway struct {
-	serverURL string
-	mcpToken  string
+	serverURL    string
+	store        *tokenStore
+	clientID     string
+	clientSecret string
 
 	mu    sync.Mutex
 	codes map[string]authCode
@@ -28,8 +35,14 @@ type authCode struct {
 	exp         time.Time
 }
 
-func newOAuthGateway(serverURL, mcpToken string) *oauthGateway {
-	return &oauthGateway{serverURL: serverURL, mcpToken: mcpToken, codes: map[string]authCode{}}
+func newOAuthGateway(serverURL string, store *tokenStore, clientID, clientSecret string) *oauthGateway {
+	return &oauthGateway{
+		serverURL:    serverURL,
+		store:        store,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		codes:        map[string]authCode{},
+	}
 }
 
 func randToken() string {
@@ -38,10 +51,44 @@ func randToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// ctEqual is a constant-time string compare.
+func ctEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// clientIDOK validates a client_id (used at the front-channel authorize step, where no
+// secret is sent). Empty configured id fails closed.
+func (g *oauthGateway) clientIDOK(id string) bool {
+	return g.clientID != "" && ctEqual(id, g.clientID)
+}
+
+// clientAuthOK validates client credentials at the token endpoint. Credentials may arrive
+// via HTTP Basic auth (client_secret_basic) or as POST body params (client_secret_post).
+// Both id and secret must match; empty configured credentials fail closed. Both
+// comparisons always run so timing does not reveal which field was wrong.
+func (g *oauthGateway) clientAuthOK(r *http.Request) bool {
+	if g.clientID == "" || g.clientSecret == "" {
+		return false
+	}
+	id, secret, ok := r.BasicAuth()
+	if !ok {
+		id = r.Form.Get("client_id")
+		secret = r.Form.Get("client_secret")
+	}
+	idOK := ctEqual(id, g.clientID)
+	secretOK := ctEqual(secret, g.clientSecret)
+	return idOK && secretOK
+}
+
 // authorize issues a one-time authorization code bound to the client's PKCE challenge,
-// then redirects back to the client's redirect_uri.
+// then redirects back to the client's redirect_uri. The client_id is validated here;
+// the client_secret is verified later at the token endpoint (never sent in the browser).
 func (g *oauthGateway) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if !g.clientIDOK(q.Get("client_id")) {
+		http.Error(w, "unknown client_id", http.StatusUnauthorized)
+		return
+	}
 	redirectURI := q.Get("redirect_uri")
 	if redirectURI == "" {
 		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
@@ -75,16 +122,31 @@ func (g *oauthGateway) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
-// token exchanges a valid authorization code + PKCE verifier for the MCP bearer token.
+// token is the OAuth token endpoint. The client must authenticate with the fixed
+// client_id + client_secret, then exchange either an authorization code or a refresh token.
 func (g *oauthGateway) token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		writeOAuthError(w, "invalid_request")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if r.Form.Get("grant_type") != "authorization_code" {
-		writeOAuthError(w, "unsupported_grant_type")
+	if !g.clientAuthOK(r) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="oauth"`)
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client")
 		return
 	}
+	switch r.Form.Get("grant_type") {
+	case "authorization_code":
+		g.grantAuthorizationCode(w, r)
+	case "refresh_token":
+		g.grantRefreshToken(w, r)
+	default:
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type")
+	}
+}
+
+// grantAuthorizationCode validates a one-time code + PKCE verifier and issues a new
+// access+refresh pair.
+func (g *oauthGateway) grantAuthorizationCode(w http.ResponseWriter, r *http.Request) {
 	code := r.Form.Get("code")
 	verifier := r.Form.Get("code_verifier")
 
@@ -94,48 +156,45 @@ func (g *oauthGateway) token(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 
 	if !ok || time.Now().After(ac.exp) {
-		writeOAuthError(w, "invalid_grant")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
 	if ru := r.Form.Get("redirect_uri"); ru != "" && ru != ac.redirectURI {
-		writeOAuthError(w, "invalid_grant")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
 	if !verifyPKCE(verifier, ac.challenge) {
-		writeOAuthError(w, "invalid_grant")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
+	at, rt, expiresIn := g.store.issue()
+	writeTokenResponse(w, at, rt, expiresIn)
+}
 
+// grantRefreshToken rotates a refresh token (single-use) into a new access+refresh pair.
+func (g *oauthGateway) grantRefreshToken(w http.ResponseWriter, r *http.Request) {
+	at, rt, expiresIn, ok := g.store.rotate(r.Form.Get("refresh_token"))
+	if !ok {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
+		return
+	}
+	writeTokenResponse(w, at, rt, expiresIn)
+}
+
+func writeTokenResponse(w http.ResponseWriter, accessToken, refreshToken string, expiresIn int) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"access_token": g.mcpToken,
-		"token_type":   "Bearer",
-		"expires_in":   3600,
-		"scope":        "mcp",
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"token_type":    "Bearer",
+		"expires_in":    expiresIn,
+		"scope":         "mcp",
 	})
 }
 
-// register is a permissive Dynamic Client Registration endpoint. The gateway uses a
-// single shared bearer, so it accepts any client and echoes back a public client_id.
-func (g *oauthGateway) register(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	resp := map[string]any{
-		"client_id":                  "tastytrade-mcp",
-		"token_endpoint_auth_method": "none",
-		"grant_types":                []string{"authorization_code"},
-		"response_types":             []string{"code"},
-	}
-	if v, ok := body["redirect_uris"]; ok {
-		resp["redirect_uris"] = v
-	}
+func writeOAuthError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func writeOAuthError(w http.ResponseWriter, code string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
 }

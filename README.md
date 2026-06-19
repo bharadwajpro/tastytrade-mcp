@@ -57,13 +57,14 @@ MCP_TRANSPORT=stdio ./tastytrade-mcp
 
 ### HTTP + OAuth (multi-user, remote)
 
-The server exposes `/mcp` behind bearer auth and publishes OAuth discovery documents at `/.well-known/oauth-authorization-server`. MCP clients connect, discover the endpoints, and complete an authorization-code + PKCE flow to obtain the bearer token.
+The server exposes `/mcp` behind bearer auth and publishes OAuth discovery documents at `/.well-known/oauth-authorization-server`. MCP clients connect, discover the endpoints, and complete an authorization-code + PKCE flow — authenticating with a fixed `OAUTH_CLIENT_ID` + `OAUTH_CLIENT_SECRET` you generate and share with the client — to obtain a short-lived access token (and a rotating refresh token). `/mcp` accepts only valid, unexpired access tokens.
 
 ```sh
-MCP_TRANSPORT=http SERVER_URL=https://mcp.example.com PORT=8080 MCP_AUTH_TOKEN=<random-secret> ./tastytrade-mcp
+MCP_TRANSPORT=http SERVER_URL=https://mcp.example.com PORT=8080 \
+  OAUTH_CLIENT_ID=<random-id> OAUTH_CLIENT_SECRET=<random-secret> ./tastytrade-mcp
 ```
 
-`SERVER_URL` must be a public **`https://`** URL for discovery to work — terminate TLS at your reverse proxy and point it at the server's `PORT`. `MCP_AUTH_TOKEN` is the bearer the OAuth flow ultimately issues; if it is left blank, `/mcp` rejects every request (fail-closed).
+`SERVER_URL` must be a public **`https://`** URL for discovery to work — terminate TLS at your reverse proxy and point it at the server's `PORT`. There is no dynamic client registration: any client_id/secret other than the configured pair is rejected, and if either is left blank the OAuth endpoint rejects every client (fail-closed), leaving `/mcp` unreachable. Tokens are held in memory, so a restart forces clients to re-authenticate.
 
 ## Configuration
 
@@ -82,7 +83,8 @@ All configuration is via environment variables or a `.env` file. See [`.env.exam
 | `MCP_TRANSPORT` | `http` | `http` or `stdio` |
 | `PORT` | `8080` | HTTP listen port |
 | `SERVER_URL` | — | Required for HTTP mode; the public HTTPS base URL of this server |
-| `MCP_AUTH_TOKEN` | — | Bearer token guarding `/mcp` in HTTP mode |
+| `OAUTH_CLIENT_ID` | — | Fixed client id the MCP client presents to the OAuth flow (HTTP mode) |
+| `OAUTH_CLIENT_SECRET` | — | Fixed client secret for the OAuth flow; with the id, gates token issuance |
 | `TT_DXLINK_CACHE_PATH` | — | Absolute path to cache the DxLink token; empty disables caching |
 | `TT_TOOL_TIMEOUT` | `30s` | Per-tool timeout |
 | `TT_STALE_QUOTE_THRESHOLD` | `5s` | Age after which a streamed quote is flagged stale |
