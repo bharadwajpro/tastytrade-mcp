@@ -18,6 +18,8 @@ func (d *Deps) registry() map[string]toolReg {
 	add(d.toolGetOptionChain())
 	add(d.toolIsMarketOpen())
 	add(d.toolSearchSymbols())
+	add(d.toolSelectContractByDelta())
+	add(d.toolSelectContractByWidth())
 
 	// Account (read-only)
 	add(d.toolListAccounts())

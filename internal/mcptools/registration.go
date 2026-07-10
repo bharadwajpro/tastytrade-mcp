@@ -16,7 +16,7 @@ func (g Gates) TradingAllowed() bool { return !g.ReadOnly && g.EnableTrading }
 // alwaysOn are read-only tools registered regardless of gates.
 var alwaysOn = []string{
 	"get_equity", "get_market_data", "get_market_metrics", "get_option_chain",
-	"is_market_open", "search_symbols",
+	"is_market_open", "search_symbols", "select_contract_by_delta", "select_contract_by_width",
 	"list_accounts", "get_trading_status", "get_balances", "list_positions",
 	"list_transactions", "get_margin_requirements",
 	"get_order", "list_live_orders", "search_orders", "dry_run_order",
