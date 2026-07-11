@@ -48,14 +48,15 @@ func run() error {
 		acctStream.Start(ctx)
 	}
 
-	// DxLink market streamer (drives get_streaming_quote).
-	marketStream := stream.NewMarketStreamer(func(ctx context.Context) (string, string, error) {
+	// DxLink market streamer (drives get_streaming_quote). Quote tokens are cached in
+	// .dxlink-credentials at the process working directory (valid ~24h).
+	marketStream := stream.NewMarketStreamer(stream.CachedQuoteProvider(func(ctx context.Context) (string, string, error) {
 		qt, err := fetcher.GetQuoteToken(ctx, client)
 		if err != nil {
 			return "", "", err
 		}
 		return qt.Token, qt.DxLinkURL, nil
-	}, cfg.StaleQuoteThreshold)
+	}), cfg.StaleQuoteThreshold)
 	marketStream.Start(ctx)
 
 	srv := mcptools.NewServer(&mcptools.Deps{

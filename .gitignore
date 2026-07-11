@@ -3,8 +3,8 @@
 .env.*
 !.env.example
 
-# DxLink token cache (if TT_DXLINK_CACHE_PATH points inside the repo)
-*.dxlinktoken
+# DxLink quote token cache (written at runtime next to .env)
+.dxlink-credentials
 
 # Built binaries
 /tastytrade-mcp

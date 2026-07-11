@@ -16,7 +16,6 @@ type Config struct {
 	AccountNumbers                   []string
 	DefaultAccount                   string
 	UserAgent, APIVersion            string
-	DxLinkCachePath                  string
 	Transport, Port                  string
 	OAuthClientID, OAuthClientSecret string
 	ServerURL                        string
@@ -50,7 +49,6 @@ func loadFrom(get getenv) (*Config, error) {
 
 	c.UserAgent = firstNonEmpty(get("TT_USER_AGENT"), "tastytrade-mcp/0.1")
 	c.APIVersion = get("TT_API_VERSION")
-	c.DxLinkCachePath = get("TT_DXLINK_CACHE_PATH") // "" => disabled
 
 	c.ReadOnly = parseBool(get("TT_READ_ONLY"), false)
 	c.EnableTrading = parseBool(get("TT_ENABLE_TRADING"), false)
