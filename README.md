@@ -66,6 +66,13 @@ MCP_TRANSPORT=http SERVER_URL=https://mcp.example.com PORT=8080 \
 
 `SERVER_URL` must be a public **`https://`** URL for discovery to work — terminate TLS at your reverse proxy and point it at the server's `PORT`. There is no dynamic client registration: any client_id/secret other than the configured pair is rejected, and if either is left blank the OAuth endpoint rejects every client (fail-closed), leaving `/mcp` unreachable. Tokens are held in memory, so a restart forces clients to re-authenticate.
 
+Generate `OAUTH_CLIENT_ID` (32 characters) and `OAUTH_CLIENT_SECRET` (64 characters, alphanumeric):
+
+```sh
+tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; echo   # OAUTH_CLIENT_ID
+tr -dc 'A-Za-z0-9' </dev/urandom | head -c 64; echo   # OAUTH_CLIENT_SECRET
+```
+
 ## Configuration
 
 All configuration is via environment variables or a `.env` file. See [`.env.example`](.env.example) for the complete, annotated reference.
@@ -85,7 +92,6 @@ All configuration is via environment variables or a `.env` file. See [`.env.exam
 | `SERVER_URL` | — | Required for HTTP mode; the public HTTPS base URL of this server |
 | `OAUTH_CLIENT_ID` | — | Fixed client id the MCP client presents to the OAuth flow (HTTP mode) |
 | `OAUTH_CLIENT_SECRET` | — | Fixed client secret for the OAuth flow; with the id, gates token issuance |
-| `TT_DXLINK_CACHE_PATH` | — | Absolute path to cache the DxLink token; empty disables caching |
 | `TT_TOOL_TIMEOUT` | `30s` | Per-tool timeout |
 | `TT_STALE_QUOTE_THRESHOLD` | `5s` | Age after which a streamed quote is flagged stale |
 
