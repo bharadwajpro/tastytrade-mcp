@@ -132,7 +132,7 @@ All tools are read-only by default. Write tools require the flag in the **Gate**
 |---|---|---|
 | `get_equity` | Look up an equity instrument | `symbol` |
 | `search_symbols` | Search tradeable symbols by fragment | `query` |
-| `get_option_chain` | Full nested option chain for an underlying | `symbol` |
+| `get_option_chain` | Nested option chain: equity OCC, or futures-option series (`/CL` = all, `/CLZ6` = that future) | `symbol` |
 | `select_contract_by_delta` | Pick the provided contract nearest a target absolute delta | `contracts`, `target_abs_delta` |
 | `select_contract_by_width` | Pick the provided contract nearest `anchor_strike + signed_width` | `contracts`, `anchor_strike`, `signed_width` |
 | `get_market_data` | Synchronous bid/ask/last quotes by instrument type | `equities`, `equity_options`, `futures`, `future_options` |

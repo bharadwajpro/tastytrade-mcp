@@ -4,17 +4,42 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strings"
 	"time"
 )
 
 // GetOptionChain fetches the nested option chain for an underlying and parses it.
+// Equity tickers (SPY) use /option-chains. Futures roots (/CL) and dated futures
+// (/CLZ6) use /futures-option-chains/{product}/nested; dated symbols are filtered
+// to series whose underlying future matches.
 func GetOptionChain(ctx context.Context, d Doer, underlying string) (*OptionChain, error) {
+	if IsFutureSymbol(underlying) {
+		return getFutureOptionChain(ctx, d, underlying)
+	}
 	var raw json.RawMessage
 	path := "/option-chains/" + url.PathEscape(underlying) + "/nested"
 	if err := d.DoJSON(ctx, "GET", path, nil, &raw); err != nil {
 		return nil, err
 	}
 	return ParseNestedChain(raw)
+}
+
+func getFutureOptionChain(ctx context.Context, d Doer, symbol string) (*OptionChain, error) {
+	root, dated, err := FutureProductRoot(symbol)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	path := "/futures-option-chains/" + url.PathEscape(root) + "/nested"
+	if err := d.DoJSON(ctx, "GET", path, nil, &raw); err != nil {
+		return nil, err
+	}
+	filter := ""
+	if dated {
+		filter = strings.ToUpper(strings.TrimSpace(symbol))
+	}
+	requested := strings.ToUpper(strings.TrimSpace(symbol))
+	return ParseNestedFutureOptionChain(raw, requested, filter)
 }
 
 // MarketStatus reports whether the equities market is currently open.

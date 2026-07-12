@@ -78,9 +78,9 @@ func (d *Deps) toolGetMarketMetrics() (mcp.Tool, server.ToolHandlerFunc) {
 
 func (d *Deps) toolGetOptionChain() (mcp.Tool, server.ToolHandlerFunc) {
 	t := mcp.NewTool("get_option_chain",
-		mcp.WithDescription("Get the nested option chain (expirations and strikes) for an underlying."),
+		mcp.WithDescription("Get the nested option chain (expirations and strikes). Equity tickers (SPY) return OCC chains. Futures product roots (/CL) return all futures-option series; dated futures (/CLZ6) return only series on that future (multiple roots/weeklies included when listed)."),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("symbol", mcp.Required(), mcp.Description("Underlying symbol, e.g. SPY")),
+		mcp.WithString("symbol", mcp.Required(), mcp.Description("Equity ticker (SPY), futures root (/CL), or dated future (/CLZ6)")),
 	)
 	return t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		sym, err := req.RequireString("symbol")
