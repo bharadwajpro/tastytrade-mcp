@@ -32,14 +32,8 @@ const (
 	dxKeepaliveTimeout = 60
 )
 
-// dxFieldSpec mirrors the acceptEventFields we send in FEED_SETUP. The order here is
-// the wire order of COMPACT FEED_DATA values.
-var dxFieldSpec = FieldSpec{
-	"Quote": {"eventType", "eventSymbol", "bidPrice", "askPrice", "bidSize", "askSize"},
-}
-
-// MarketStreamer maintains a DxLink websocket, subscribing to Quote events and
-// caching the latest bid/ask per symbol.
+// MarketStreamer maintains a DxLink websocket, subscribing to Quote/Trade/Summary/
+// Profile/Greeks and caching a merged snapshot per symbol.
 type MarketStreamer struct {
 	provider       QuoteProvider
 	dialer         *websocket.Dialer
@@ -78,10 +72,10 @@ func (m *MarketStreamer) Start(ctx context.Context) {
 	go m.loop(ctx)
 }
 
-// Subscribe adds symbols to the desired Quote subscription set and nudges the
-// streamer to (re)subscribe.
+// Subscribe adds symbols to the desired Quote/Trade/Summary/Profile/Greeks
+// subscription set and nudges the streamer to (re)subscribe.
 func (m *MarketStreamer) Subscribe(symbols []string) {
-	keys := buildKeys(symbols, []string{"Quote"})
+	keys := buildKeys(symbols, dxEventTypes)
 	m.mu.Lock()
 	for _, k := range keys {
 		m.desired[k] = true
@@ -104,8 +98,8 @@ func (m *MarketStreamer) Quote(symbol string, now time.Time) (Quote, bool, bool)
 	return q, true, isStale(q, now, m.staleThreshold)
 }
 
-// WaitForQuotes polls until every symbol has a cached quote or the context is done.
-// Used after Subscribe so the first tool call can return data once DxLink events arrive.
+// WaitForQuotes polls until every symbol has a Quote event (bid/ask) or the
+// context is done. Trade/Summary/Profile/Greeks are best-effort in the same window.
 func (m *MarketStreamer) WaitForQuotes(ctx context.Context, symbols []string) {
 	if len(symbols) == 0 {
 		return
@@ -113,7 +107,7 @@ func (m *MarketStreamer) WaitForQuotes(ctx context.Context, symbols []string) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if m.allFound(symbols) {
+		if m.allQuotesFound(symbols) {
 			return
 		}
 		select {
@@ -124,11 +118,11 @@ func (m *MarketStreamer) WaitForQuotes(ctx context.Context, symbols []string) {
 	}
 }
 
-func (m *MarketStreamer) allFound(symbols []string) bool {
+func (m *MarketStreamer) allQuotesFound(symbols []string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, s := range symbols {
-		if _, ok := m.quotes[s]; !ok {
+		if q, ok := m.quotes[s]; !ok || !q.HasQuote {
 			return false
 		}
 	}
@@ -239,10 +233,14 @@ func (m *MarketStreamer) handle(conn *websocket.Conn, token string, msg []byte) 
 			})
 		}
 	case "CHANNEL_OPENED":
+		accept := make(map[string]any, len(dxFieldSpec))
+		for et, fields := range dxFieldSpec {
+			accept[et] = fields
+		}
 		return m.write(conn, map[string]any{
 			"type": "FEED_SETUP", "channel": dxChannel,
 			"acceptAggregationPeriod": 0.1, "acceptDataFormat": "COMPACT",
-			"acceptEventFields": map[string]any{"Quote": dxFieldSpec["Quote"]},
+			"acceptEventFields": accept,
 		})
 	case "FEED_CONFIG":
 		m.mu.Lock()
@@ -256,7 +254,8 @@ func (m *MarketStreamer) handle(conn *websocket.Conn, token string, msg []byte) 
 	return nil
 }
 
-// ingest decodes a COMPACT FEED_DATA payload ([eventType, [flat...]]) into quotes.
+// ingest decodes a COMPACT FEED_DATA payload ([eventType, [flat...]]) into the
+// per-symbol cache, merging each event type independently.
 func (m *MarketStreamer) ingest(data json.RawMessage) {
 	var pair []json.RawMessage
 	if err := json.Unmarshal(data, &pair); err != nil || len(pair) != 2 {
@@ -284,16 +283,143 @@ func (m *MarketStreamer) ingest(data json.RawMessage) {
 		}
 		q := m.quotes[sym]
 		q.Symbol = sym
-		if v, ok := toFloat(ev.Fields["bidPrice"]); ok {
-			q.Bid = v
+		switch eventType {
+		case "Quote":
+			applyQuoteFields(&q, ev.Fields, now)
+		case "Trade":
+			applyTradeFields(&q, ev.Fields, now)
+		case "Summary":
+			applySummaryFields(&q, ev.Fields, now)
+		case "Profile":
+			applyProfileFields(&q, ev.Fields, now)
+		case "Greeks":
+			applyGreeksFields(&q, ev.Fields, now)
 		}
-		if v, ok := toFloat(ev.Fields["askPrice"]); ok {
-			q.Ask = v
-		}
-		q.UpdatedAt = now
 		m.quotes[sym] = q
 	}
 	m.status.UpdatedAt = now
+}
+
+func applyQuoteFields(q *Quote, fields map[string]any, now time.Time) {
+	setFloat(&q.EventTime, fields["eventTime"])
+	setFloat(&q.Sequence, fields["sequence"])
+	setFloat(&q.TimeNanoPart, fields["timeNanoPart"])
+	setFloat(&q.BidTime, fields["bidTime"])
+	setString(&q.BidExchangeCode, fields["bidExchangeCode"])
+	setFloat(&q.Bid, fields["bidPrice"])
+	setFloat(&q.BidSize, fields["bidSize"])
+	setFloat(&q.AskTime, fields["askTime"])
+	setString(&q.AskExchangeCode, fields["askExchangeCode"])
+	setFloat(&q.Ask, fields["askPrice"])
+	setFloat(&q.AskSize, fields["askSize"])
+	q.HasQuote = true
+	q.QuoteAt = now
+	q.UpdatedAt = now
+}
+
+func applyTradeFields(q *Quote, fields map[string]any, now time.Time) {
+	setFloat(&q.TradeEventTime, fields["eventTime"])
+	setFloat(&q.TradeTimeNanoPart, fields["timeNanoPart"])
+	setString(&q.TradeExchangeCode, fields["exchangeCode"])
+	setFloat(&q.Last, fields["price"])
+	setFloat(&q.Change, fields["change"])
+	setFloat(&q.LastSize, fields["size"])
+	setFloat(&q.DayVolume, fields["dayVolume"])
+	setFloat(&q.DayTurnover, fields["dayTurnover"])
+	setString(&q.TickDirection, fields["tickDirection"])
+	setBool(&q.ExtendedTradingHours, fields["extendedTradingHours"])
+	q.HasTrade = true
+	q.TradeAt = now
+	q.UpdatedAt = now
+}
+
+func applySummaryFields(q *Quote, fields map[string]any, now time.Time) {
+	setFloat(&q.DayID, fields["dayId"])
+	setFloat(&q.DayOpen, fields["dayOpenPrice"])
+	setFloat(&q.DayHigh, fields["dayHighPrice"])
+	setFloat(&q.DayLow, fields["dayLowPrice"])
+	setFloat(&q.DayClose, fields["dayClosePrice"])
+	setString(&q.DayClosePriceType, fields["dayClosePriceType"])
+	setFloat(&q.PrevDayID, fields["prevDayId"])
+	setFloat(&q.PrevClose, fields["prevDayClosePrice"])
+	setString(&q.PrevClosePriceType, fields["prevDayClosePriceType"])
+	setFloat(&q.PrevDayVolume, fields["prevDayVolume"])
+	setFloat(&q.OpenInterest, fields["openInterest"])
+	q.HasSummary = true
+	q.SummaryAt = now
+	q.UpdatedAt = now
+}
+
+func applyProfileFields(q *Quote, fields map[string]any, now time.Time) {
+	setString(&q.Description, fields["description"])
+	setString(&q.ShortSaleRestriction, fields["shortSaleRestriction"])
+	setString(&q.TradingStatus, fields["tradingStatus"])
+	setString(&q.StatusReason, fields["statusReason"])
+	setFloat(&q.HaltStartTime, fields["haltStartTime"])
+	setFloat(&q.HaltEndTime, fields["haltEndTime"])
+	setFloat(&q.HighLimitPrice, fields["highLimitPrice"])
+	setFloat(&q.LowLimitPrice, fields["lowLimitPrice"])
+	setFloat(&q.High52WeekPrice, fields["high52WeekPrice"])
+	setFloat(&q.Low52WeekPrice, fields["low52WeekPrice"])
+	setFloat(&q.Beta, fields["beta"])
+	setFloat(&q.EarningsPerShare, fields["earningsPerShare"])
+	setFloat(&q.DividendFrequency, fields["dividendFrequency"])
+	setFloat(&q.ExDividendAmount, fields["exDividendAmount"])
+	setFloat(&q.ExDividendDayID, fields["exDividendDayId"])
+	setFloat(&q.Shares, fields["shares"])
+	setFloat(&q.FreeFloat, fields["freeFloat"])
+	q.HasProfile = true
+	q.ProfileAt = now
+	q.UpdatedAt = now
+}
+
+func applyGreeksFields(q *Quote, fields map[string]any, now time.Time) {
+	setFloat(&q.GreeksEventTime, fields["eventTime"])
+	setFloat(&q.GreeksEventFlags, fields["eventFlags"])
+	setFloat(&q.GreeksIndex, fields["index"])
+	setFloat(&q.GreeksTime, fields["time"])
+	setFloat(&q.GreeksSequence, fields["sequence"])
+	setFloat(&q.TheoPrice, fields["price"])
+	setFloat(&q.Volatility, fields["volatility"])
+	setFloat(&q.Delta, fields["delta"])
+	setFloat(&q.Gamma, fields["gamma"])
+	setFloat(&q.Theta, fields["theta"])
+	setFloat(&q.Rho, fields["rho"])
+	setFloat(&q.Vega, fields["vega"])
+	q.HasGreeks = true
+	q.GreeksAt = now
+	q.UpdatedAt = now
+}
+
+func setFloat(dst *float64, v any) {
+	if f, ok := toFloat(v); ok {
+		*dst = f
+	}
+}
+
+func setString(dst *string, v any) {
+	switch t := v.(type) {
+	case string:
+		if t != "" && t != "NaN" {
+			*dst = t
+		}
+	case float64:
+		// dxFeed sometimes encodes char exchange codes as numbers
+		if t != 0 {
+			*dst = string(rune(int(t)))
+		}
+	}
+}
+
+func setBool(dst *bool, v any) {
+	switch t := v.(type) {
+	case bool:
+		*dst = t
+	case float64:
+		*dst = t != 0
+	case string:
+		*dst = t == "true" || t == "True" || t == "1"
+	}
 }
 
 // resubscribeLoop sends incremental FEED_SUBSCRIPTION adds whenever the desired set

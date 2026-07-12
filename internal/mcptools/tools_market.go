@@ -32,7 +32,7 @@ func (d *Deps) toolGetEquity() (mcp.Tool, server.ToolHandlerFunc) {
 
 func (d *Deps) toolGetMarketData() (mcp.Tool, server.ToolHandlerFunc) {
 	t := mcp.NewTool("get_market_data",
-		mcp.WithDescription("Get synchronous bid/ask/last quotes for symbols grouped by instrument type."),
+		mcp.WithDescription("Get synchronous market quotes for symbols grouped by instrument type (full /market-data/by-type fields: bid/ask/sizes, mid/mark/last, OHLC, volume, halt flags, etc.)."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithArray("equities", mcp.Description("Equity symbols"), mcp.WithStringItems()),
 		mcp.WithArray("equity_options", mcp.Description("Equity option (OCC) symbols"), mcp.WithStringItems()),

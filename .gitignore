@@ -6,6 +6,10 @@
 # DxLink quote token cache (written at runtime next to .env)
 .dxlink-credentials
 
+# Live API field inventory output (may contain account data)
+/probe-out/
+
 # Built binaries
 /tastytrade-mcp
 /cmd/tastytrade-mcp/tastytrade-mcp
+/cmd/apiprobe/apiprobe

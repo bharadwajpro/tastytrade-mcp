@@ -23,9 +23,9 @@ func (d *Deps) toolAccountStreamStatus() (mcp.Tool, server.ToolHandlerFunc) {
 
 func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 	t := mcp.NewTool("get_streaming_quote",
-		mcp.WithDescription("Subscribe to and return the latest live DxLink bid/ask for symbols. Waits briefly for first events after a new subscription."),
+		mcp.WithDescription("Subscribe to DxLink Quote/Trade/Summary/Profile/Greeks and return the merged cached snapshot for each symbol. Waits briefly for first Quote events after a new subscription."),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithArray("symbols", mcp.Required(), mcp.Description("DxLink streamer symbols (e.g. SPY, or option streamer symbols)"), mcp.WithStringItems()),
+		mcp.WithArray("symbols", mcp.Required(), mcp.Description("DxLink streamer symbols (e.g. SPY, /ESU6, or option streamer symbols like .SPY260717C500)"), mcp.WithStringItems()),
 	)
 	return t, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if d.MarketStream == nil {
@@ -44,8 +44,10 @@ func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 		for _, s := range syms {
 			q, found, stale := d.MarketStream.Quote(s, now)
 			out = append(out, map[string]any{
-				"symbol": s, "found": found, "stale": stale,
-				"bid": q.Bid, "ask": q.Ask, "updated_at": q.UpdatedAt,
+				"symbol": s,
+				"found":  found,
+				"stale":  stale,
+				"data":   q,
 			})
 		}
 		return jsonOK(map[string]any{"quotes": out, "status": d.MarketStream.Status()}), nil

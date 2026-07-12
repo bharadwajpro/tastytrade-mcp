@@ -135,8 +135,8 @@ All tools are read-only by default. Write tools require the flag in the **Gate**
 | `get_option_chain` | Nested option chain: equity OCC, or futures-option series (`/CL` = all, `/CLZ6` = that future) | `symbol` |
 | `select_contract_by_delta` | Pick the provided contract nearest a target absolute delta | `contracts`, `target_abs_delta` |
 | `select_contract_by_width` | Pick the provided contract nearest `anchor_strike + signed_width` | `contracts`, `anchor_strike`, `signed_width` |
-| `get_market_data` | Synchronous bid/ask/last quotes by instrument type | `equities`, `equity_options`, `futures`, `future_options` |
-| `get_streaming_quote` | Latest live DxLink bid/ask (subscribes on demand) | `symbols` |
+| `get_market_data` | Full synchronous market quotes by instrument type | `equities`, `equity_options`, `futures`, `future_options` |
+| `get_streaming_quote` | Live DxLink Quote/Trade/Summary/Profile/Greeks snapshot | `symbols` |
 | `get_market_metrics` | IV rank/percentile, beta, liquidity | `symbols` |
 | `is_market_open` | Whether the equity session is currently open | — |
 | `list_accounts` | Accounts available to the customer | — |
