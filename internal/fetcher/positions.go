@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 )
 
@@ -9,9 +10,9 @@ type Position struct {
 	Symbol            string `json:"symbol"`
 	InstrumentType    string `json:"instrument-type"`     // "Equity Option" | "Equity" | ...
 	UnderlyingSymbol  string `json:"underlying-symbol"`
-	Quantity          string `json:"quantity"`            // string per API
+	Quantity          json.Number `json:"quantity"`
 	QuantityDirection string `json:"quantity-direction"`  // "Long" | "Short" | "Zero"
-	Multiplier        int    `json:"multiplier"`          // 100 for equity options
+	Multiplier        json.Number `json:"multiplier"`
 }
 
 func ListPositions(ctx context.Context, d Doer, account string) ([]Position, error) {

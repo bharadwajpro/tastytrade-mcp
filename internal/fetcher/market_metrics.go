@@ -2,16 +2,17 @@ package fetcher
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strings"
 )
 
 type MarketMetric struct {
-	Symbol                      string `json:"symbol"`
-	ImpliedVolatilityRank       string `json:"implied-volatility-index-rank"`
-	ImpliedVolatilityPercentile string `json:"implied-volatility-percentile"`
-	Beta                        string `json:"beta"`
-	Liquidity                   string `json:"liquidity-rating"`
+	Symbol                      string      `json:"symbol"`
+	ImpliedVolatilityRank       string      `json:"implied-volatility-index-rank"`
+	ImpliedVolatilityPercentile string      `json:"implied-volatility-percentile"`
+	Beta                        string      `json:"beta"`
+	Liquidity                   json.Number `json:"liquidity-rating"` // API returns a number (e.g. 4), not a string
 }
 
 func GetMarketMetrics(ctx context.Context, d Doer, symbols []string) ([]MarketMetric, error) {

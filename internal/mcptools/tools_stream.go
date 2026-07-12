@@ -23,7 +23,7 @@ func (d *Deps) toolAccountStreamStatus() (mcp.Tool, server.ToolHandlerFunc) {
 
 func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 	t := mcp.NewTool("get_streaming_quote",
-		mcp.WithDescription("Subscribe to and return the latest live DxLink bid/ask for symbols. First call may report quotes as stale until events arrive."),
+		mcp.WithDescription("Subscribe to and return the latest live DxLink bid/ask for symbols. Waits briefly for first events after a new subscription."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithArray("symbols", mcp.Required(), mcp.Description("DxLink streamer symbols (e.g. SPY, or option streamer symbols)"), mcp.WithStringItems()),
 	)
@@ -36,6 +36,9 @@ func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 			return mcp.NewToolResultError("symbols is required"), nil
 		}
 		d.MarketStream.Subscribe(syms)
+		waitCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		d.MarketStream.WaitForQuotes(waitCtx, syms)
+		cancel()
 		now := time.Now()
 		out := make([]map[string]any, 0, len(syms))
 		for _, s := range syms {

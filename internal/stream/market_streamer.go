@@ -104,6 +104,37 @@ func (m *MarketStreamer) Quote(symbol string, now time.Time) (Quote, bool, bool)
 	return q, true, isStale(q, now, m.staleThreshold)
 }
 
+// WaitForQuotes polls until every symbol has a cached quote or the context is done.
+// Used after Subscribe so the first tool call can return data once DxLink events arrive.
+func (m *MarketStreamer) WaitForQuotes(ctx context.Context, symbols []string) {
+	if len(symbols) == 0 {
+		return
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if m.allFound(symbols) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *MarketStreamer) allFound(symbols []string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range symbols {
+		if _, ok := m.quotes[s]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Status returns a copy of the current status.
 func (m *MarketStreamer) Status() MarketStreamStatus {
 	m.mu.Lock()
