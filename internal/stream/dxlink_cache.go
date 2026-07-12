@@ -48,6 +48,20 @@ func saveCredentials(t *DxLinkToken) error {
 	return saveCredentialsAt(DxLinkCredentialsFile, t)
 }
 
+// invalidateCredentials removes the on-disk DxLink token cache so the next
+// provider call fetches a fresh api-quote-token from tastytrade.
+func invalidateCredentials() error {
+	return invalidateCredentialsAt(DxLinkCredentialsFile)
+}
+
+func invalidateCredentialsAt(path string) error {
+	err := os.Remove(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func loadCredentialsAt(path string) (*DxLinkToken, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

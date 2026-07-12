@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -202,13 +203,13 @@ func (m *MarketStreamer) session(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := m.handle(conn, token, msg); err != nil {
+		if err := m.handle(ctx, conn, &token, msg); err != nil {
 			return err
 		}
 	}
 }
 
-func (m *MarketStreamer) handle(conn *websocket.Conn, token string, msg []byte) error {
+func (m *MarketStreamer) handle(ctx context.Context, conn *websocket.Conn, token *string, msg []byte) error {
 	var env struct {
 		Type    string          `json:"type"`
 		Channel int             `json:"channel"`
@@ -221,7 +222,12 @@ func (m *MarketStreamer) handle(conn *websocket.Conn, token string, msg []byte) 
 	switch env.Type {
 	case "AUTH_STATE":
 		if env.State == "UNAUTHORIZED" {
-			return m.write(conn, map[string]any{"type": "AUTH", "channel": 0, "token": token})
+			authToken, err := m.authTokenForUnauthorized(ctx, *token)
+			if err != nil {
+				return err
+			}
+			*token = authToken
+			return m.write(conn, map[string]any{"type": "AUTH", "channel": 0, "token": authToken})
 		}
 		if env.State == "AUTHORIZED" {
 			m.mu.Lock()
@@ -252,6 +258,35 @@ func (m *MarketStreamer) handle(conn *websocket.Conn, token string, msg []byte) 
 		m.ingest(env.Data)
 	}
 	return nil
+}
+
+// authTokenForUnauthorized returns the token to send on AUTH. The initial DxLink
+// handshake is UNAUTHORIZED before the session token is accepted; once authorized,
+// a later UNAUTHORIZED means the quote token expired and must be refetched.
+func (m *MarketStreamer) authTokenForUnauthorized(ctx context.Context, sessionToken string) (string, error) {
+	m.mu.Lock()
+	needsRefresh := m.status.Authorized
+	m.mu.Unlock()
+	if !needsRefresh {
+		return sessionToken, nil
+	}
+
+	if err := invalidateCredentials(); err != nil {
+		log.Printf("dxlink cache: invalidate %s: %v", DxLinkCredentialsFile, err)
+	}
+	token, _, err := m.provider(ctx)
+	if err != nil {
+		return "", err
+	}
+	log.Printf("dxlink: refreshed quote token after mid-session UNAUTHORIZED")
+
+	m.mu.Lock()
+	m.status.Authorized = false
+	m.ready = false
+	m.status.FeedReady = false
+	m.current = map[SubKey]bool{}
+	m.mu.Unlock()
+	return token, nil
 }
 
 // ingest decodes a COMPACT FEED_DATA payload ([eventType, [flat...]]) into the
