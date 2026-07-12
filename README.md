@@ -136,13 +136,13 @@ All tools are read-only by default. Write tools require the flag in the **Gate**
 | `select_contract_by_delta` | Pick the provided contract nearest a target absolute delta | `contracts`, `target_abs_delta` |
 | `select_contract_by_width` | Pick the provided contract nearest `anchor_strike + signed_width` | `contracts`, `anchor_strike`, `signed_width` |
 | `get_market_data` | Full synchronous market quotes by instrument type | `equities`, `equity_options`, `futures`, `future_options` |
-| `get_streaming_quote` | Live DxLink Quote/Trade/Summary/Profile/Greeks snapshot | `symbols` |
+| `get_streaming_quote` | Live DxLink Quote/Trade/Summary/Profile/Greeks snapshot | `symbols`, `account` (optional; enables position-based streamer resolution) |
 | `get_market_metrics` | IV rank/percentile, beta, liquidity | `symbols` |
 | `is_market_open` | Whether the equity session is currently open | — |
 | `list_accounts` | Accounts available to the customer | — |
 | `get_trading_status` | Permissions, day-trade count, margin-call flag | `account` |
 | `get_balances` | Cash, net liq, buying power | `account` |
-| `list_positions` | Open positions | `account` |
+| `list_positions` | Open positions with streamer-symbol and cost/P/L fields | `account` |
 | `list_transactions` | Filtered transaction history | `account`, `symbol`, `type`, `start_date`, `end_date` |
 | `get_margin_requirements` | Margin requirements report | `account` |
 | `get_order` | A single order by id | `account`, `id` |

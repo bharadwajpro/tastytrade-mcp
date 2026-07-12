@@ -32,6 +32,7 @@ type Future struct {
 	Symbol         string `json:"symbol"`
 	ProductCode    string `json:"product-code"`
 	InstrumentType string `json:"instrument-type"`
+	StreamerSymbol string `json:"streamer-symbol"`
 }
 
 func GetFuture(ctx context.Context, d Doer, symbol string) (*Future, error) {

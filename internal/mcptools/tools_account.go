@@ -63,7 +63,7 @@ func (d *Deps) toolGetBalances() (mcp.Tool, server.ToolHandlerFunc) {
 
 func (d *Deps) toolListPositions() (mcp.Tool, server.ToolHandlerFunc) {
 	t := mcp.NewTool("list_positions",
-		mcp.WithDescription("List open positions for an account."),
+		mcp.WithDescription("List open positions for an account, including streamer-symbol and P/L fields (average-open-price, close-price, realized-day-gain)."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		accountArg(),
 	)

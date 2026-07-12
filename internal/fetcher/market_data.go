@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 )
 
@@ -67,7 +68,7 @@ type MarketQuote struct {
 	YearHighPrice    string `json:"year-high-price"`
 	Volume           string `json:"volume,omitempty"`
 	VolumeExt        string `json:"volume-ext,omitempty"`
-	OpenInterest     string `json:"open-interest,omitempty"`
+	OpenInterest     json.Number `json:"open-interest,omitempty"` // API returns number for FO, string for some others
 	TickSize         string `json:"tick-size,omitempty"`
 	// Option / future-option greeks (absent on plain equities/futures)
 	Delta      string `json:"delta,omitempty"`
