@@ -73,6 +73,90 @@ tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; echo   # OAUTH_CLIENT_ID
 tr -dc 'A-Za-z0-9' </dev/urandom | head -c 64; echo   # OAUTH_CLIENT_SECRET
 ```
 
+### Deploy as a systemd service behind Caddy (Tailscale)
+
+For a single always-on HTTP instance shared by multiple agents: bind the binary to localhost, terminate TLS on Caddy on your Tailscale IP, and run under a user systemd unit so it survives reboots and crashes.
+
+1. **Build and configure `.env`:**
+
+```sh
+go build -o tastytrade-mcp ./cmd/tastytrade-mcp
+```
+
+```env
+MCP_TRANSPORT=http
+PORT=9090
+LISTEN_HOST=127.0.0.1
+SERVER_URL=https://tt.ts.example.com
+# plus TT_* credentials and OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET
+```
+
+`LISTEN_HOST=127.0.0.1` keeps the app off the LAN/WAN; only the reverse proxy should reach it. `SERVER_URL` must be the public HTTPS hostname clients use (OAuth discovery embeds it).
+
+2. **User systemd unit** (`~/.config/systemd/user/tastytrade-mcp.service`):
+
+```ini
+[Unit]
+Description=tastytrade MCP server (HTTP + OAuth)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/tastytrade-mcp
+ExecStart=%h/Projects/tastytrade-mcp/tastytrade-mcp
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+Environment=HOME=%h
+Environment=PATH=%h/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target
+```
+
+Adjust `WorkingDirectory` / `ExecStart` to your checkout path. The process loads `.env` from the working directory via godotenv.
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now tastytrade-mcp.service
+# linger so the user unit starts at boot without an interactive login:
+loginctl enable-linger "$USER"
+```
+
+Useful commands: `systemctl --user status tastytrade-mcp`, `systemctl --user restart tastytrade-mcp`, `journalctl --user -u tastytrade-mcp -f`. Rebuild the binary, then restart the unit after code changes.
+
+3. **Caddy on the Tailscale IP** — listen only on the tailnet address (not LAN), proxy to localhost. Example site block (wildcard DNS `*.ts.example.com` → your Tailscale IPv4):
+
+```caddy
+(tailnet_tls) {
+	bind 100.x.y.z          # your Tailscale IPv4 (and IPv6 if desired)
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+	}
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}
+
+tt.ts.example.com {
+	import tailnet_tls
+	# Streamable HTTP / SSE — disable response buffering
+	reverse_proxy 127.0.0.1:9090 {
+		flush_interval -1
+	}
+}
+```
+
+Reload Caddy after editing. Clients on the same Tailscale network then use `https://tt.ts.example.com/mcp`.
+
+**stdio vs this HTTP deploy:** each stdio client typically spawns its own process; this HTTP setup is one long-lived server shared by many agents.
+
 ## Configuration
 
 All configuration is via environment variables or a `.env` file. See [`.env.example`](.env.example) for the complete, annotated reference.
@@ -89,6 +173,7 @@ All configuration is via environment variables or a `.env` file. See [`.env.exam
 | `TT_ENABLE_QUOTE_ALERTS` | `false` | Allow quote-alert list/create/delete |
 | `MCP_TRANSPORT` | `http` | `http` or `stdio` |
 | `PORT` | `8080` | HTTP listen port |
+| `LISTEN_HOST` | *(all interfaces)* | Optional bind host; use `127.0.0.1` behind a reverse proxy |
 | `SERVER_URL` | — | Required for HTTP mode; the public HTTPS base URL of this server |
 | `OAUTH_CLIENT_ID` | — | Fixed client id the MCP client presents to the OAuth flow (HTTP mode) |
 | `OAUTH_CLIENT_SECRET` | — | Fixed client secret for the OAuth flow; with the id, gates token issuance |
@@ -120,7 +205,7 @@ Add to `claude_desktop_config.json`:
 
 ### HTTP + OAuth client
 
-Point your MCP client at `{SERVER_URL}/mcp`. It discovers the OAuth endpoints via `{SERVER_URL}/.well-known/oauth-authorization-server` and performs PKCE to obtain a bearer token automatically.
+Point your MCP client at `{SERVER_URL}/mcp` (for example `https://tt.ts.example.com/mcp`). It discovers the OAuth endpoints via `{SERVER_URL}/.well-known/oauth-authorization-server` and performs PKCE to obtain a bearer token automatically. Configure the client with the same `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` set on the server.
 
 ## Tool catalog
 
@@ -183,6 +268,6 @@ All tools are read-only by default. Write tools require the flag in the **Gate**
 ## Build
 
 ```sh
-go build ./...
+go build -o tastytrade-mcp ./cmd/tastytrade-mcp
 go vet ./...
 ```

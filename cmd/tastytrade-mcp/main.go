@@ -81,11 +81,17 @@ func run() error {
 		if cfg.OAuthClientID == "" || cfg.OAuthClientSecret == "" {
 			log.Printf("warning: OAUTH_CLIENT_ID/OAUTH_CLIENT_SECRET is empty; /oauth/token will reject all clients (and /mcp is unreachable) until both are set")
 		}
-		log.Printf("tastytrade-mcp %s listening on :%s (env=%s, read_only=%v)", Version, cfg.Port, cfg.Environment, cfg.ReadOnly)
+		// LISTEN_HOST defaults empty (all interfaces). Behind Caddy, set 127.0.0.1.
+		host := os.Getenv("LISTEN_HOST")
+		addr := ":" + cfg.Port
+		if host != "" {
+			addr = host + ":" + cfg.Port
+		}
+		log.Printf("tastytrade-mcp %s listening on %s (env=%s, read_only=%v)", Version, addr, cfg.Environment, cfg.ReadOnly)
 		return mcptools.ServeHTTP(ctx, srv, mcptools.HTTPConfig{
 			ServerURL:         cfg.ServerURL,
 			OAuthClientID:     cfg.OAuthClientID,
 			OAuthClientSecret: cfg.OAuthClientSecret,
-		}, ":"+cfg.Port)
+		}, addr)
 	}
 }
