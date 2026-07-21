@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ func TestAuthTokenForUnauthorizedInitialHandshake(t *testing.T) {
 	}
 }
 
-func TestAuthTokenForUnauthorizedMidSessionRefreshes(t *testing.T) {
+func TestAuthTokenForUnauthorizedMidSessionReconnects(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -43,28 +44,30 @@ func TestAuthTokenForUnauthorizedMidSessionRefreshes(t *testing.T) {
 	m := NewMarketStreamer(provider, 0)
 	m.mu.Lock()
 	m.status.Authorized = true
+	m.ready = true
+	m.status.FeedReady = true
 	m.mu.Unlock()
 
 	tok, err := m.authTokenForUnauthorized(context.Background(), "stale-session-tok")
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, errMidSessionUnauthorized) {
+		t.Fatalf("err = %v, want errMidSessionUnauthorized", err)
 	}
-	if calls != 1 {
-		t.Fatalf("fetch called %d times, want 1", calls)
+	if tok != "" {
+		t.Fatalf("got token %q, want empty", tok)
 	}
-	if tok != "new-tok" {
-		t.Fatalf("got %q, want new-tok", tok)
+	if calls != 0 {
+		t.Fatalf("provider called %d times during handle; want 0 (fetch happens on next session)", calls)
 	}
 	cached, err := loadCredentialsAt(DxLinkCredentialsFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cached == nil || cached.Token != "new-tok" || cached.DxLinkURL != "wss://new" {
-		t.Fatalf("disk cache = %+v", cached)
+	if cached != nil {
+		t.Fatalf("disk cache should be invalidated, got %+v", cached)
 	}
 
 	st := m.Status()
 	if st.Authorized || st.FeedReady {
-		t.Fatalf("status after refresh: %+v", st)
+		t.Fatalf("status after mid-session UNAUTHORIZED: %+v", st)
 	}
 }

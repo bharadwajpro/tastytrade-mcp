@@ -3,8 +3,10 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"sync"
 	"time"
 
@@ -13,6 +15,11 @@ import (
 
 // QuoteProvider returns a fresh DxLink api-quote-token and its websocket URL.
 type QuoteProvider func(ctx context.Context) (token, dxlinkURL string, err error)
+
+// errMidSessionUnauthorized forces a full websocket reconnect after the quote
+// token expires mid-session. Re-AUTH on the same socket leaves channel/feed
+// setup stuck (authorized=true, feed_ready=false).
+var errMidSessionUnauthorized = errors.New("dxlink: mid-session UNAUTHORIZED; reconnecting with fresh quote token")
 
 // MarketStreamStatus is a snapshot of the DxLink connection health.
 type MarketStreamStatus struct {
@@ -40,15 +47,16 @@ type MarketStreamer struct {
 	dialer         *websocket.Dialer
 	staleThreshold time.Duration
 
-	mu      sync.Mutex
-	quotes  map[string]Quote
-	desired map[SubKey]bool
-	current map[SubKey]bool
-	status  MarketStreamStatus
-	conn    *websocket.Conn
-	ready   bool
-	writeMu sync.Mutex
-	wake    chan struct{}
+	mu       sync.Mutex
+	quotes   map[string]Quote
+	desired  map[SubKey]bool
+	current  map[SubKey]bool
+	status   MarketStreamStatus
+	conn     *websocket.Conn
+	ready    bool
+	gotReady bool // true if this session reached FEED_CONFIG
+	writeMu  sync.Mutex
+	wake     chan struct{}
 }
 
 // NewMarketStreamer constructs (but does not start) the streamer.
@@ -145,8 +153,12 @@ func (m *MarketStreamer) loop(ctx context.Context) {
 	for ctx.Err() == nil {
 		err := m.session(ctx)
 		m.mu.Lock()
+		gotReady := m.gotReady
+		m.gotReady = false
 		m.ready, m.status.Connected, m.status.Authorized, m.status.FeedReady = false, false, false, false
 		m.current = map[SubKey]bool{}
+		// Drop cached quotes so WaitForQuotes cannot succeed on a dead session.
+		m.quotes = map[string]Quote{}
 		if err != nil && ctx.Err() == nil {
 			m.status.LastError = err.Error()
 		}
@@ -154,10 +166,22 @@ func (m *MarketStreamer) loop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		resetBackoff := gotReady || errors.Is(err, errMidSessionUnauthorized)
+		if resetBackoff {
+			backoff = reconnectMin
+		}
+		if err != nil {
+			log.Printf("dxlink: session ended: %v (reconnect in %s)", err, backoff)
+		} else {
+			log.Printf("dxlink: session ended (reconnect in %s)", backoff)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
+		}
+		if resetBackoff {
+			continue
 		}
 		if backoff *= 2; backoff > reconnectMax {
 			backoff = reconnectMax
@@ -168,17 +192,19 @@ func (m *MarketStreamer) loop(ctx context.Context) {
 func (m *MarketStreamer) session(ctx context.Context) error {
 	token, dxURL, err := m.provider(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("quote token: %w", err)
 	}
+	log.Printf("dxlink: dialing %s", dxHost(dxURL))
 	conn, _, err := m.dialer.DialContext(ctx, dxURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("dial %s: %w", dxHost(dxURL), err)
 	}
 	defer conn.Close()
 
 	m.mu.Lock()
 	m.conn = conn
 	m.status.Connected = true
+	m.status.LastError = ""
 	m.mu.Unlock()
 
 	go func() {
@@ -192,6 +218,7 @@ func (m *MarketStreamer) session(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	log.Printf("dxlink: SETUP sent")
 
 	kaCtx, stopKA := context.WithCancel(ctx)
 	defer stopKA()
@@ -214,6 +241,7 @@ func (m *MarketStreamer) handle(ctx context.Context, conn *websocket.Conn, token
 		Type    string          `json:"type"`
 		Channel int             `json:"channel"`
 		State   string          `json:"state"`
+		Message string          `json:"message"`
 		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(msg, &env); err != nil {
@@ -227,18 +255,21 @@ func (m *MarketStreamer) handle(ctx context.Context, conn *websocket.Conn, token
 				return err
 			}
 			*token = authToken
+			log.Printf("dxlink: sending AUTH (initial handshake)")
 			return m.write(conn, map[string]any{"type": "AUTH", "channel": 0, "token": authToken})
 		}
 		if env.State == "AUTHORIZED" {
 			m.mu.Lock()
 			m.status.Authorized = true
 			m.mu.Unlock()
+			log.Printf("dxlink: AUTHORIZED; requesting FEED channel")
 			return m.write(conn, map[string]any{
 				"type": "CHANNEL_REQUEST", "channel": dxChannel, "service": "FEED",
 				"parameters": map[string]any{"contract": "AUTO"},
 			})
 		}
 	case "CHANNEL_OPENED":
+		log.Printf("dxlink: CHANNEL_OPENED; sending FEED_SETUP")
 		accept := make(map[string]any, len(dxFieldSpec))
 		for et, fields := range dxFieldSpec {
 			accept[et] = fields
@@ -250,20 +281,32 @@ func (m *MarketStreamer) handle(ctx context.Context, conn *websocket.Conn, token
 		})
 	case "FEED_CONFIG":
 		m.mu.Lock()
-		m.ready, m.status.FeedReady = true, true
+		m.ready, m.status.FeedReady, m.gotReady = true, true, true
+		subs := len(m.desired)
 		m.current = map[SubKey]bool{}
 		m.mu.Unlock()
+		log.Printf("dxlink: FEED_CONFIG; feed_ready=true desired_subs=%d", subs)
 		m.nudge()
 	case "FEED_DATA":
 		m.ingest(env.Data)
+	case "ERROR":
+		errMsg := env.Message
+		if errMsg == "" {
+			errMsg = string(msg)
+		}
+		log.Printf("dxlink: ERROR frame: %s", errMsg)
+		m.mu.Lock()
+		m.status.LastError = errMsg
+		m.mu.Unlock()
 	}
 	return nil
 }
 
-// authTokenForUnauthorized returns the token to send on AUTH. The initial DxLink
-// handshake is UNAUTHORIZED before the session token is accepted; once authorized,
-// a later UNAUTHORIZED means the quote token expired and must be refetched.
-func (m *MarketStreamer) authTokenForUnauthorized(ctx context.Context, sessionToken string) (string, error) {
+// authTokenForUnauthorized returns the token to send on AUTH for the initial
+// handshake. Mid-session UNAUTHORIZED invalidates the cached quote token and
+// returns errMidSessionUnauthorized so loop() closes the socket and redials
+// with a fresh token+URL (full SETUP→AUTH→CHANNEL→FEED_CONFIG).
+func (m *MarketStreamer) authTokenForUnauthorized(_ context.Context, sessionToken string) (string, error) {
 	m.mu.Lock()
 	needsRefresh := m.status.Authorized
 	m.mu.Unlock()
@@ -274,11 +317,6 @@ func (m *MarketStreamer) authTokenForUnauthorized(ctx context.Context, sessionTo
 	if err := invalidateCredentials(); err != nil {
 		log.Printf("dxlink cache: invalidate %s: %v", DxLinkCredentialsFile, err)
 	}
-	token, _, err := m.provider(ctx)
-	if err != nil {
-		return "", err
-	}
-	log.Printf("dxlink: refreshed quote token after mid-session UNAUTHORIZED")
 
 	m.mu.Lock()
 	m.status.Authorized = false
@@ -286,7 +324,9 @@ func (m *MarketStreamer) authTokenForUnauthorized(ctx context.Context, sessionTo
 	m.status.FeedReady = false
 	m.current = map[SubKey]bool{}
 	m.mu.Unlock()
-	return token, nil
+
+	log.Printf("dxlink: mid-session UNAUTHORIZED; invalidating quote token and reconnecting")
+	return "", errMidSessionUnauthorized
 }
 
 // ingest decodes a COMPACT FEED_DATA payload ([eventType, [flat...]]) into the
@@ -473,7 +513,12 @@ func (m *MarketStreamer) resubscribeLoop(ctx context.Context, conn *websocket.Co
 func (m *MarketStreamer) flushSubs(conn *websocket.Conn) {
 	m.mu.Lock()
 	if !m.ready {
+		desired := len(m.desired)
+		authorized := m.status.Authorized
+		connected := m.status.Connected
 		m.mu.Unlock()
+		log.Printf("dxlink: skip FEED_SUBSCRIPTION; feed_ready=false connected=%v authorized=%v desired_subs=%d",
+			connected, authorized, desired)
 		return
 	}
 	desired := make([]SubKey, 0, len(m.desired))
@@ -492,7 +537,19 @@ func (m *MarketStreamer) flushSubs(conn *websocket.Conn) {
 	for _, k := range toAdd {
 		add = append(add, map[string]string{"type": k.Type, "symbol": k.Symbol})
 	}
-	_ = m.write(conn, map[string]any{"type": "FEED_SUBSCRIPTION", "channel": dxChannel, "add": add})
+	if err := m.write(conn, map[string]any{"type": "FEED_SUBSCRIPTION", "channel": dxChannel, "add": add}); err != nil {
+		log.Printf("dxlink: FEED_SUBSCRIPTION add=%d failed: %v", len(add), err)
+		return
+	}
+	log.Printf("dxlink: FEED_SUBSCRIPTION add=%d", len(add))
+}
+
+func dxHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return u.Host
 }
 
 func (m *MarketStreamer) keepaliveLoop(ctx context.Context, conn *websocket.Conn) {

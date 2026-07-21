@@ -23,18 +23,24 @@ func CachedQuoteProvider(fetch func(ctx context.Context) (token, dxlinkURL strin
 	return func(ctx context.Context) (string, string, error) {
 		now := time.Now()
 		if t, err := loadCredentials(); err == nil && t != nil && t.valid(now) {
+			log.Printf("dxlink cache: using cached quote token (expires %s)", t.Expiration.UTC().Format(time.RFC3339))
 			return t.Token, t.DxLinkURL, nil
 		} else if err != nil {
 			log.Printf("dxlink cache: read %s: %v (fetching fresh token)", DxLinkCredentialsFile, err)
+		} else {
+			log.Printf("dxlink cache: no valid cached token; fetching fresh")
 		}
 		token, url, err := fetch(ctx)
 		if err != nil {
 			return "", "", err
 		}
+		exp := now.Add(dxLinkTokenTTL)
 		if err := saveCredentials(&DxLinkToken{
-			Token: token, DxLinkURL: url, Expiration: now.Add(dxLinkTokenTTL),
+			Token: token, DxLinkURL: url, Expiration: exp,
 		}); err != nil {
 			log.Printf("dxlink cache: write %s: %v", DxLinkCredentialsFile, err)
+		} else {
+			log.Printf("dxlink cache: stored fresh quote token (expires %s)", exp.UTC().Format(time.RFC3339))
 		}
 		return token, url, nil
 	}

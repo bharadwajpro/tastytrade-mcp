@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -68,9 +69,14 @@ func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 		d.MarketStream.WaitForQuotes(waitCtx, streamerSyms)
 		cancel()
 		now := time.Now()
+		st := d.MarketStream.Status()
 		out := make([]map[string]any, 0, len(resolved))
+		missing := 0
 		for _, r := range resolved {
 			q, found, stale := d.MarketStream.Quote(r.streamer, now)
+			if !found {
+				missing++
+			}
 			out = append(out, map[string]any{
 				"symbol":          r.requested,
 				"streamer_symbol": r.streamer,
@@ -79,6 +85,10 @@ func (d *Deps) toolStreamingQuote() (mcp.Tool, server.ToolHandlerFunc) {
 				"data":            q,
 			})
 		}
-		return jsonOK(map[string]any{"quotes": out, "status": d.MarketStream.Status()}), nil
+		if missing > 0 || !st.FeedReady {
+			log.Printf("dxlink: get_streaming_quote missing=%d/%d feed_ready=%v connected=%v authorized=%v cached_quotes=%d last_error=%q",
+				missing, len(resolved), st.FeedReady, st.Connected, st.Authorized, st.CachedQuotes, st.LastError)
+		}
+		return jsonOK(map[string]any{"quotes": out, "status": st}), nil
 	}
 }
