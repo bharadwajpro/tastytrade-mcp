@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/selector"
+	"github.com/bharadwajpro/tastytrade-mcp/selector"
 )
 
 type selectedContractResult struct {

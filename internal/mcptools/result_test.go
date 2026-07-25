@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/stream"
+	"github.com/bharadwajpro/tastytrade-mcp/stream"
 )
 
 func TestMarshalResultSanitizesNaN(t *testing.T) {

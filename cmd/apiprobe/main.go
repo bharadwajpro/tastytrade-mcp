@@ -21,9 +21,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/config"
-	"github.com/bharadwajpro/tastytrade-mcp/internal/fetcher"
-	"github.com/bharadwajpro/tastytrade-mcp/internal/ttclient"
+	"github.com/bharadwajpro/tastytrade-mcp/config"
+	"github.com/bharadwajpro/tastytrade-mcp/fetcher"
+	"github.com/bharadwajpro/tastytrade-mcp/ttclient"
 )
 
 const outDir = "probe-out"

@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/config"
-	"github.com/bharadwajpro/tastytrade-mcp/internal/fetcher"
+	"github.com/bharadwajpro/tastytrade-mcp/config"
+	"github.com/bharadwajpro/tastytrade-mcp/fetcher"
 	"github.com/bharadwajpro/tastytrade-mcp/internal/mcptools"
-	"github.com/bharadwajpro/tastytrade-mcp/internal/stream"
-	"github.com/bharadwajpro/tastytrade-mcp/internal/ttclient"
+	"github.com/bharadwajpro/tastytrade-mcp/stream"
+	"github.com/bharadwajpro/tastytrade-mcp/ttclient"
 )
 
 const Version = "0.1.0-dev"
@@ -25,6 +25,9 @@ func main() {
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if err := config.LoadMCP(cfg); err != nil {
 		return err
 	}
 
@@ -82,10 +85,9 @@ func run() error {
 			log.Printf("warning: OAUTH_CLIENT_ID/OAUTH_CLIENT_SECRET is empty; /oauth/token will reject all clients (and /mcp is unreachable) until both are set")
 		}
 		// LISTEN_HOST defaults empty (all interfaces). Behind Caddy, set 127.0.0.1.
-		host := os.Getenv("LISTEN_HOST")
 		addr := ":" + cfg.Port
-		if host != "" {
-			addr = host + ":" + cfg.Port
+		if cfg.ListenHost != "" {
+			addr = cfg.ListenHost + ":" + cfg.Port
 		}
 		log.Printf("tastytrade-mcp %s listening on %s (env=%s, read_only=%v)", Version, addr, cfg.Environment, cfg.ReadOnly)
 		return mcptools.ServeHTTP(ctx, srv, mcptools.HTTPConfig{

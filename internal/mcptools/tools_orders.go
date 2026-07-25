@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/orders"
+	"github.com/bharadwajpro/tastytrade-mcp/orders"
 )
 
 // parseLegs decodes a JSON array of legs. Each element uses the tastytrade dasherized

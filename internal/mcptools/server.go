@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/stream"
+	"github.com/bharadwajpro/tastytrade-mcp/stream"
 )
 
 // Doer is the HTTP dependency every fetcher/service needs (satisfied by *ttclient.Client).

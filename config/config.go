@@ -8,7 +8,7 @@ import (
 )
 
 type Config struct {
-	Gates // embeds ReadOnly + Enable* (task 013)
+	Gates // embeds ReadOnly + Enable*
 
 	ClientSecret, RefreshToken       string
 	Environment                      Environment
@@ -16,15 +16,20 @@ type Config struct {
 	AccountNumbers                   []string
 	DefaultAccount                   string
 	UserAgent, APIVersion            string
-	Transport, Port                  string
+	ToolTimeout, StaleQuoteThreshold time.Duration
+
+	// MCP server fields — filled by LoadMCP, unused by library consumers.
+	Transport, Port, ListenHost      string
 	OAuthClientID, OAuthClientSecret string
 	ServerURL                        string
-	ToolTimeout, StaleQuoteThreshold time.Duration
 }
 
 // getenv is the injected lookup: returns value (or "" if unset).
 type getenv func(string) string
 
+// Load reads tastytrade credentials and settings from the process environment
+// (best-effort .env in the working directory via godotenv). It does not require
+// MCP transport variables — use LoadMCP for those.
 func Load() (*Config, error) {
 	_ = godotenv.Load() // best-effort
 	return loadFrom(osGetenv)
@@ -55,18 +60,31 @@ func loadFrom(get getenv) (*Config, error) {
 	c.EnableWatchlistWrites = parseBool(get("TT_ENABLE_WATCHLIST_WRITES"), false)
 	c.EnableQuoteAlerts = parseBool(get("TT_ENABLE_QUOTE_ALERTS"), false)
 
+	c.ToolTimeout = parseDuration(get("TT_TOOL_TIMEOUT"), 30*time.Second)
+	c.StaleQuoteThreshold = parseDuration(get("TT_STALE_QUOTE_THRESHOLD"), 5*time.Second)
+	return c, nil
+}
+
+// LoadMCP fills MCP transport / OAuth fields on an existing Config (from Load).
+// Call this only from the MCP server binary — library consumers do not need it.
+func LoadMCP(c *Config) error {
+	return loadMCPFrom(c, osGetenv)
+}
+
+func loadMCPFrom(c *Config, get getenv) error {
+	if c == nil {
+		return fmt.Errorf("config: LoadMCP requires a non-nil Config")
+	}
 	c.Transport = firstNonEmpty(get("MCP_TRANSPORT"), "http")
+	c.ListenHost = get("LISTEN_HOST")
 	if c.Transport == "http" {
 		c.Port = firstNonEmpty(get("PORT"), "8080")
 		c.ServerURL = get("SERVER_URL")
 		if c.ServerURL == "" {
-			return nil, fmt.Errorf("SERVER_URL is required for MCP_TRANSPORT=http")
+			return fmt.Errorf("SERVER_URL is required for MCP_TRANSPORT=http")
 		}
 		c.OAuthClientID = get("OAUTH_CLIENT_ID")
 		c.OAuthClientSecret = get("OAUTH_CLIENT_SECRET")
 	}
-
-	c.ToolTimeout = parseDuration(get("TT_TOOL_TIMEOUT"), 30*time.Second)
-	c.StaleQuoteThreshold = parseDuration(get("TT_STALE_QUOTE_THRESHOLD"), 5*time.Second)
-	return c, nil
+	return nil
 }

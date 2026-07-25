@@ -1,6 +1,6 @@
 # tastytrade-mcp
 
-A public, fully-configurable [MCP](https://modelcontextprotocol.io/) server exposing the **tastytrade** brokerage API as MCP tools — REST, DxLink market streaming, and account streaming.
+A public, fully-configurable [MCP](https://modelcontextprotocol.io/) server exposing the **tastytrade** brokerage API as MCP tools — REST, DxLink market streaming, and account streaming. The same domain packages (`ttclient`, `fetcher`, `orders`, …) can be imported as a Go library.
 
 ## Features
 
@@ -181,6 +181,191 @@ All configuration is via environment variables or a `.env` file. See [`.env.exam
 | `TT_STALE_QUOTE_THRESHOLD` | `5s` | Age after which a streamed quote is flagged stale |
 
 \* The code default is `false`, but the shipped `.env.example` sets `TT_READ_ONLY=true` so a fresh checkout is read-only until you opt in.
+
+`MCP_TRANSPORT`, `PORT`, `LISTEN_HOST`, `SERVER_URL`, and `OAUTH_*` apply only to the MCP server binary. Library consumers need only the `TT_*` variables (or an explicit config struct).
+
+## Use as a Go library
+
+This repo is **private**. Other Go modules you own can import the domain packages after Go is told to skip the public proxy and Git can clone GitHub.
+
+Public packages: `config`, `ttclient`, `fetcher`, `orders`, `selector`, `stream`, `watchlist`. MCP stays in `internal/mcptools` (not importable from outside).
+
+### 1. One-time machine setup (Fish)
+
+Add to `~/.config/fish/config.fish` (quote the globs — Fish expands bare `*`):
+
+```fish
+# Private Go modules (skip public proxy/sumdb)
+set -gx GOPRIVATE 'github.com/bharadwajpro/*'
+set -gx GONOSUMDB 'github.com/bharadwajpro/*'
+set -gx GONOPROXY 'github.com/bharadwajpro/*'
+```
+
+```fish
+source ~/.config/fish/config.fish
+go env GOPRIVATE GONOSUMDB GONOPROXY
+# expect: github.com/bharadwajpro/* for each
+```
+
+Prefer SSH for private clones:
+
+```fish
+git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+```
+
+### 2. Add the dependency (in the client repo)
+
+```fish
+cd /path/to/your-client
+go get github.com/bharadwajpro/tastytrade-mcp@latest
+# or pin: go get github.com/bharadwajpro/tastytrade-mcp@main
+```
+
+Local checkout instead of fetching from GitHub:
+
+```go
+// go.mod
+replace github.com/bharadwajpro/tastytrade-mcp => ../tastytrade-mcp
+```
+
+### 3. Credentials in the client process
+
+Set tastytrade OAuth env vars in the **client** (this repo’s `.env` is not used remotely). MCP-only vars (`SERVER_URL`, `OAUTH_*`, `MCP_TRANSPORT`, …) are not needed.
+
+```fish
+set -gx TT_CLIENT_SECRET '...'
+set -gx TT_REFRESH_TOKEN '...'
+set -gx TT_ENVIRONMENT sandbox          # or production
+set -gx TT_ACCOUNT_NUMBER '5WX...'      # optional but useful
+# optional: put the same keys in a .env next to the client’s working directory
+```
+
+### 4. Minimal client code
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/bharadwajpro/tastytrade-mcp/config"
+	"github.com/bharadwajpro/tastytrade-mcp/fetcher"
+	"github.com/bharadwajpro/tastytrade-mcp/ttclient"
+)
+
+func main() {
+	ctx := context.Background()
+
+	cfg, err := config.Load() // TT_* + optional .env in cwd
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client := ttclient.New(ttclient.Config{
+		BaseURL:      cfg.APIBaseURL,
+		ClientSecret: cfg.ClientSecret,
+		RefreshToken: cfg.RefreshToken,
+		UserAgent:    cfg.UserAgent,
+		APIVersion:   cfg.APIVersion,
+	}, nil)
+	// Or: client, err := ttclient.NewFromEnv()
+
+	account := cfg.DefaultAccount
+	if account == "" {
+		log.Fatal("set TT_ACCOUNT_NUMBER")
+	}
+
+	bal, err := fetcher.GetBalances(ctx, client, account)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("net liq: %s\n", bal.NetLiquidatingValue)
+}
+```
+
+To bypass env loading, build `ttclient.Config{...}` yourself and pass it to `ttclient.New` — the client never re-reads the environment after construction.
+
+### Library API
+
+Almost every REST helper takes `ctx` and a `Doer` (satisfied by `*ttclient.Client`). Refresh this list locally with:
+
+```fish
+go doc -short github.com/bharadwajpro/tastytrade-mcp/fetcher
+go doc -all github.com/bharadwajpro/tastytrade-mcp/orders
+```
+
+#### `config` — env / settings
+
+| Symbol | Purpose |
+|---|---|
+| `Load()` | Read `TT_*` (+ optional `.env`); no MCP vars required |
+| `LoadMCP(*Config)` | MCP binary only — transport / `SERVER_URL` / OAuth |
+| `Config`, `Gates`, `Environment` | Loaded settings and safety flags |
+
+#### `ttclient` — authenticated HTTP
+
+| Symbol | Purpose |
+|---|---|
+| `New(Config, *http.Client)` | Explicit credentials / base URL |
+| `NewFromEnv()` / `NewFromEnvHTTP` | `config.Load` then `New` |
+| `(*Client).DoJSON` / `AccessToken` | Authenticated REST + token refresh |
+| `DecodeData` / `DecodeItems` | Envelope helpers |
+
+#### `fetcher` — instruments, market, account reads
+
+| Symbol | Purpose |
+|---|---|
+| `GetEquity` / `GetFuture` / `SearchSymbols` | Instrument lookup |
+| `GetOptionChain` / `ParseNestedChain` | Nested equity / futures-option chains |
+| `SelectExpiries` | Pick expiries around a target DTE |
+| `GetMarketData` / `GetMarketMetrics` | Sync quotes and IV metrics |
+| `IsMarketOpen` / `GetCurrentSession` | Equity session |
+| `GetCustomer` / `ListAccounts` / `GetTradingStatus` | Customer / account |
+| `GetBalances` / `GetBalanceByCurrency` | Balances |
+| `ListPositions` / `AggregateGreeks` | Positions + portfolio greeks |
+| `ListTransactions` | Filtered history (`TxFilter`) |
+| `GetMarginRequirements` | Margin report |
+| `GetQuoteToken` | DxLink quote-streamer token |
+| `ResolveStreamerSymbol` / `StreamerSymbolsFromPositions` | Symbol → streamer symbol |
+
+#### `orders` — order build + trading
+
+| Symbol | Purpose |
+|---|---|
+| `BuildOrder` / `BuildComplexOrder` | Construct payloads |
+| `DryRunOrder` / `PlaceOrder` | Validate / submit (caller enforces gates) |
+| `ReplaceOrder` / `PatchOrder` / `CancelOrder` | Live order mutations |
+| `CancelComplexOrder` | OTOCO / OCO cancel |
+| `GetOrder` / `ListLiveOrders` / `SearchOrders` | Read / search |
+| `DecidePlace` | Dry-run vs live vs reject helper |
+| `NetMidPrice` | Mid from leg quotes |
+
+#### `selector` — contract picks
+
+| Symbol | Purpose |
+|---|---|
+| `ByDelta` | Nearest absolute delta |
+| `ByWidth` | Nearest `anchor_strike + signed_width` |
+
+#### `stream` — WebSockets
+
+| Symbol | Purpose |
+|---|---|
+| `NewMarketStreamer` / `CachedQuoteProvider` | DxLink quotes (token cache file) |
+| `NewAccountStreamer` | Account order/balance/position stream |
+| `(*MarketStreamer).Start` / quote APIs | Live market stream lifecycle |
+| `(*AccountStreamer).Start` / `Status` | Account stream lifecycle |
+
+#### `watchlist` — watchlists + quote alerts
+
+| Symbol | Purpose |
+|---|---|
+| `BuildBody` / `ListWatchlists` / `GetWatchlist` | Read / build |
+| `CreateWatchlist` / `UpdateWatchlist` / `DeleteWatchlist` | Writes |
+| `BuildQuoteAlert` / `ListQuoteAlerts` | Alert build / list |
+| `CreateQuoteAlert` / `DeleteQuoteAlert` | Alert writes |
 
 ## Connecting clients
 

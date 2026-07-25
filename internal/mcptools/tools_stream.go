@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/fetcher"
+	"github.com/bharadwajpro/tastytrade-mcp/fetcher"
 )
 
 func (d *Deps) toolAccountStreamStatus() (mcp.Tool, server.ToolHandlerFunc) {

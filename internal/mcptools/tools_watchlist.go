@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/bharadwajpro/tastytrade-mcp/internal/watchlist"
+	"github.com/bharadwajpro/tastytrade-mcp/watchlist"
 )
 
 func parseEntries(s string) ([]watchlist.Entry, error) {

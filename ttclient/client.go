@@ -18,7 +18,7 @@ type httpDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// Config carries the values Client needs. All come from internal/config.
+// Config carries the values Client needs (from config.Load or set explicitly).
 type Config struct {
 	BaseURL      string // e.g. https://api.tastyworks.com
 	ClientSecret string
